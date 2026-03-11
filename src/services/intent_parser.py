@@ -64,6 +64,10 @@ _ANALYSIS_PATTERN = re.compile(r"\b(analyse|analyze|analysis|check|look at|what 
 _TRADE_PATTERN = re.compile(
     r"\b(long|short|buy|sell|trade|setup|position|entry|going|thinking of)\b", re.I
 )
+# Price-level keywords that also indicate trade context (e.g. "change my stop to 2310")
+_TRADE_LEVEL_PATTERN = re.compile(
+    r"\b(stop.?loss|stop|sl|take.?profit|target|tp|entry price|risk)\b", re.I
+)
 
 _PRICE_PATTERN = re.compile(r"\b(\d{1,6}(?:\.\d{1,5})?)\b")
 _RISK_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*(?:risk)?", re.I)
@@ -146,7 +150,7 @@ class IntentParser:
 
     @staticmethod
     def _has_trade_context(text: str) -> bool:
-        return bool(_TRADE_PATTERN.search(text))
+        return bool(_TRADE_PATTERN.search(text) or _TRADE_LEVEL_PATTERN.search(text))
 
     def _extract_symbol(self, text: str) -> Optional[str]:
         lower = text.lower()
@@ -184,15 +188,30 @@ class IntentParser:
     @staticmethod
     def _extract_price_levels(text: str) -> dict[str, float]:
         levels: dict[str, float] = {}
-        # Named levels with optional prepositions: "entry at 1.2345", "stop loss: 1.23", "tp = 1.25"
+        # Forward patterns: label NUMBER
         for label, keys in [
-            (r"(?:entry|at price|price)\s*(?:at|:|-|=)?\s*", "entry_price"),
-            (r"(?:stop.?loss|stop|sl)\s*(?:at|:|-|=)?\s*(?:at\s+)?", "stop_loss"),
-            (r"(?:take.?profit|target|tp|t\.?p\.?)\s*(?:at|:|-|=)?\s*(?:at\s+)?", "take_profit"),
+            (r"(?:entry|at price|price)\s*(?:at|:|-|=|is|to)?\s*", "entry_price"),
+            (r"(?:stop.?loss|stop|sl)\s*(?:at|:|-|=|is|to)?\s*(?:at\s+)?", "stop_loss"),
+            (r"(?:take.?profit|target|tp|t\.?p\.?)\s*(?:at|:|-|=|is|to)?\s*(?:at\s+)?", "take_profit"),
         ]:
             m = re.search(label + r"(\d{1,6}(?:\.\d{1,5})?)", text, re.I)
             if m:
                 levels[keys] = float(m.group(1))
+
+        # Reverse patterns: NUMBER for/as label (e.g., "2305 for stop loss")
+        if "stop_loss" not in levels:
+            m = re.search(r"\b(\d{1,6}(?:\.\d{1,5})?)\s*(?:for|as|=)?\s*(?:the\s+)?(?:stop.?loss|stop|sl)\b", text, re.I)
+            if m:
+                levels["stop_loss"] = float(m.group(1))
+        if "take_profit" not in levels:
+            m = re.search(r"\b(\d{1,6}(?:\.\d{1,5})?)\s*(?:for|as|=)?\s*(?:the\s+)?(?:take.?profit|target|tp|t\.?p\.?)\b", text, re.I)
+            if m:
+                levels["take_profit"] = float(m.group(1))
+        if "entry_price" not in levels:
+            m = re.search(r"\b(\d{1,6}(?:\.\d{1,5})?)\s*(?:for|as|=)?\s*(?:the\s+)?(?:entry price|entry)\b", text, re.I)
+            if m:
+                levels["entry_price"] = float(m.group(1))
+
         return levels
 
     @staticmethod
