@@ -1,0 +1,16 @@
+# Core
+python-telegram-bot==21.3
+openai==1.30.5
+pydantic==2.7.4
+pydantic-settings==2.3.4
+python-dotenv==1.0.1
+numpy==1.26.4
+aiofiles==23.2.1
+
+# MetaTrader 5 (Windows only — stubbed on other platforms)
+MetaTrader5==5.0.4718
+
+# Dev / test
+pytest==8.2.2
+pytest-asyncio==0.23.7
+pytest-mock==3.14.0
