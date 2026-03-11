@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -164,6 +165,14 @@ class ConversationManager:
         self, ctx: ConversationContext, parsed: ParsedMessage, text: str
     ) -> str:
         if parsed.intent == UserIntent.NEW_TRADE:
+            # If we already have a draft and the user is just providing
+            # missing fields, treat as enrichment rather than starting over
+            if ctx.active_draft and ctx.active_draft.interpreted_thesis:
+                thesis = ctx.active_draft.interpreted_thesis
+                has_new_symbol = parsed.extracted_symbol and parsed.extracted_symbol != thesis.symbol
+                # Only start fresh if user explicitly brings a new symbol
+                if not has_new_symbol:
+                    return await self._enrich_draft(ctx, parsed, text)
             return await self._start_intake(ctx, parsed, text)
         if parsed.intent in (UserIntent.REFINE_TRADE, UserIntent.ASK_QUESTION):
             return await self._enrich_draft(ctx, parsed, text)
@@ -260,20 +269,43 @@ class ConversationManager:
         thesis = draft.interpreted_thesis or InterpretedTradeThesis()
         draft.conversation_history.append(f"User: {text}")
 
-        # Merge new information
-        if parsed.extracted_symbol and not thesis.symbol:
-            thesis.symbol = parsed.extracted_symbol
-        if parsed.extracted_direction and thesis.direction is None:
-            thesis.direction = parsed.extracted_direction
+        is_refinement = parsed.intent == UserIntent.REFINE_TRADE
+
+        # Merge new information — overwrite if refining, fill if enriching
+        if parsed.extracted_symbol:
+            if is_refinement or not thesis.symbol:
+                thesis.symbol = parsed.extracted_symbol
+        if parsed.extracted_direction:
+            if is_refinement or thesis.direction is None:
+                thesis.direction = parsed.extracted_direction
         for key, value in parsed.extracted_price_levels.items():
-            if key == "entry_price" and not thesis.entry_price_hint:
-                thesis.entry_price_hint = value
-            elif key == "stop_loss" and not thesis.stop_loss_hint:
-                thesis.stop_loss_hint = value
-            elif key == "take_profit" and not thesis.take_profit_hint:
-                thesis.take_profit_hint = value
-        if parsed.extracted_risk_pct and not thesis.risk_pct_hint:
-            thesis.risk_pct_hint = parsed.extracted_risk_pct
+            if key == "entry_price":
+                if is_refinement or not thesis.entry_price_hint:
+                    thesis.entry_price_hint = value
+            elif key == "stop_loss":
+                if is_refinement or not thesis.stop_loss_hint:
+                    thesis.stop_loss_hint = value
+            elif key == "take_profit":
+                if is_refinement or not thesis.take_profit_hint:
+                    thesis.take_profit_hint = value
+        if parsed.extracted_risk_pct:
+            if is_refinement or not thesis.risk_pct_hint:
+                thesis.risk_pct_hint = parsed.extracted_risk_pct
+
+        # Context-aware: if user sends a bare number and fields are still missing,
+        # try to assign it to the first missing price field.
+        # This uses a full-string anchor (^ … $) so it only fires when the ENTIRE
+        # message is just a number — distinct from the general price extractor.
+        if not parsed.extracted_price_levels and not parsed.extracted_symbol and not parsed.extracted_direction:
+            bare_number = re.search(r"^\s*(\d{1,6}(?:\.\d{1,5})?)\s*$", text)
+            if bare_number:
+                val = float(bare_number.group(1))
+                if not thesis.entry_price_hint:
+                    thesis.entry_price_hint = val
+                elif not thesis.stop_loss_hint:
+                    thesis.stop_loss_hint = val
+                elif not thesis.take_profit_hint:
+                    thesis.take_profit_hint = val
 
         self._drafts.update_draft(draft, thesis)
 

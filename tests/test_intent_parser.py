@@ -129,6 +129,41 @@ class TestPriceLevelExtraction:
         result = await intent_parser.parse("Use 1.5% risk on this", "u1")
         assert result.extracted_risk_pct == pytest.approx(1.5)
 
+    @pytest.mark.asyncio
+    async def test_stop_loss_with_is_separator(self, intent_parser):
+        """'my stop is 2305' should extract stop_loss via 'is' separator."""
+        result = await intent_parser.parse("my stop is 2305", "u1")
+        assert "stop_loss" in result.extracted_price_levels
+        assert result.extracted_price_levels["stop_loss"] == pytest.approx(2305.0)
+
+    @pytest.mark.asyncio
+    async def test_stop_loss_reverse_pattern(self, intent_parser):
+        """'2305 for stop loss' should extract stop_loss via reverse pattern."""
+        result = await intent_parser.parse("2305 for stop loss", "u1")
+        assert "stop_loss" in result.extracted_price_levels
+        assert result.extracted_price_levels["stop_loss"] == pytest.approx(2305.0)
+
+    @pytest.mark.asyncio
+    async def test_take_profit_reverse_pattern(self, intent_parser):
+        """'2360 for target' should extract take_profit via reverse pattern."""
+        result = await intent_parser.parse("2360 for target", "u1")
+        assert "take_profit" in result.extracted_price_levels
+        assert result.extracted_price_levels["take_profit"] == pytest.approx(2360.0)
+
+    @pytest.mark.asyncio
+    async def test_entry_reverse_pattern(self, intent_parser):
+        """'2320 for entry' should extract entry_price via reverse pattern."""
+        result = await intent_parser.parse("2320 for entry", "u1")
+        assert "entry_price" in result.extracted_price_levels
+        assert result.extracted_price_levels["entry_price"] == pytest.approx(2320.0)
+
+    @pytest.mark.asyncio
+    async def test_stop_shorthand_reverse_pattern(self, intent_parser):
+        """'2305 stop' should extract stop_loss via reverse pattern."""
+        result = await intent_parser.parse("2305 stop", "u1")
+        assert "stop_loss" in result.extracted_price_levels
+        assert result.extracted_price_levels["stop_loss"] == pytest.approx(2305.0)
+
 
 class TestCanonicalise:
     def test_gold(self):
