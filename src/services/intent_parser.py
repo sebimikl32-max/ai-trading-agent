@@ -79,7 +79,12 @@ class IntentParser:
     def __init__(self, llm_engine: Optional[LLMEngine] = None) -> None:
         self._llm = llm_engine
 
-    async def parse(self, text: str, user_id: str) -> ParsedMessage:
+    async def parse(
+        self,
+        text: str,
+        user_id: str,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> ParsedMessage:
         """Parse *text* and return a ParsedMessage."""
         intent = self._classify_intent(text)
         symbol = self._extract_symbol(text)
@@ -91,7 +96,9 @@ class IntentParser:
         # If confidence is low and an LLM is available, attempt enrichment.
         if confidence < 0.6 and self._llm:
             try:
-                llm_result = await self._llm.parse_trade_intent(text)
+                llm_result = await self._llm.parse_trade_intent(
+                    text, conversation_history=conversation_history
+                )
                 symbol = symbol or _canonicalise(llm_result.get("symbol"))
                 direction = direction or _parse_direction(llm_result.get("direction"))
                 risk_pct = risk_pct or llm_result.get("risk_pct")

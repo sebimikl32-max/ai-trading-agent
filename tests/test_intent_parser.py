@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from src.schemas.message import UserIntent
@@ -140,3 +142,40 @@ class TestCanonicalise:
 
     def test_none_returns_none(self):
         assert _canonicalise(None) is None
+
+
+class TestConversationHistory:
+    @pytest.mark.asyncio
+    async def test_parse_accepts_none_history(self, intent_parser):
+        """parse() should work with conversation_history=None (backward compat)."""
+        result = await intent_parser.parse("Long EURUSD", "u1", conversation_history=None)
+        assert result.extracted_symbol == "EURUSD"
+
+    @pytest.mark.asyncio
+    async def test_parse_accepts_empty_history(self, intent_parser):
+        """parse() should work with conversation_history=[]."""
+        result = await intent_parser.parse("Long EURUSD", "u1", conversation_history=[])
+        assert result.extracted_symbol == "EURUSD"
+
+    @pytest.mark.asyncio
+    async def test_conversation_history_forwarded_to_llm(self):
+        """When confidence is low, parse() should forward conversation_history to LLM."""
+        mock_llm = MagicMock()
+        mock_llm.parse_trade_intent = AsyncMock(return_value={
+            "intent": "NEW_TRADE",
+            "symbol": "EURUSD",
+            "direction": "LONG",
+            "confidence": 0.9,
+        })
+        parser = IntentParser(llm_engine=mock_llm)
+
+        history = [
+            {"role": "user", "content": "I mentioned gold earlier"},
+            {"role": "assistant", "content": "Got it, XAUUSD."},
+        ]
+        # Use a vague message that will have low rule-based confidence
+        await parser.parse("same one", "u1", conversation_history=history)
+
+        mock_llm.parse_trade_intent.assert_called_once()
+        _, kwargs = mock_llm.parse_trade_intent.call_args
+        assert kwargs.get("conversation_history") == history

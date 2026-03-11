@@ -43,7 +43,11 @@ class LLMEngine:
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    async def parse_trade_intent(self, text: str) -> dict[str, Any]:
+    async def parse_trade_intent(
+        self,
+        text: str,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> dict[str, Any]:
         """Parse raw user text into a structured trade intent dict.
 
         Returns a dict with keys: intent, symbol, direction, entry_price,
@@ -65,7 +69,9 @@ class LLMEngine:
             f"Parse the following trading message and return JSON matching this schema:\n"
             f"{json.dumps(schema, indent=2)}\n\nMessage: {text}"
         )
-        return await self._json_completion(_SYSTEM_PROMPT, prompt, fallback={})
+        return await self._json_completion(
+            _SYSTEM_PROMPT, prompt, fallback={}, history=conversation_history
+        )
 
     async def generate_debate_narrative(
         self,
@@ -73,6 +79,7 @@ class LLMEngine:
         objections: list[str],
         variants: list[str],
         market_summary: str,
+        conversation_history: Optional[list[dict]] = None,
     ) -> str:
         """Return a conversational debate narrative for the user."""
         prompt = (
@@ -83,14 +90,30 @@ class LLMEngine:
             "Write a clear, concise debate narrative (3–6 paragraphs) addressing these points. "
             "End with a question or recommendation for the user."
         )
-        return await self._text_completion(_DEBATE_SYSTEM_PROMPT, prompt, fallback="")
+        return await self._text_completion(
+            _DEBATE_SYSTEM_PROMPT, prompt, fallback="", history=conversation_history
+        )
 
-    async def answer_question(self, question: str, context: str) -> str:
+    async def answer_question(
+        self,
+        question: str,
+        context: str,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> str:
         """Answer a trading question given context."""
         prompt = f"Context:\n{context}\n\nQuestion: {question}"
-        return await self._text_completion(_SYSTEM_PROMPT, prompt, fallback="I couldn't process that question right now.")
+        return await self._text_completion(
+            _SYSTEM_PROMPT,
+            prompt,
+            fallback="I couldn't process that question right now.",
+            history=conversation_history,
+        )
 
-    async def assess_trade_quality(self, draft_summary: str) -> dict[str, Any]:
+    async def assess_trade_quality(
+        self,
+        draft_summary: str,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> dict[str, Any]:
         """Return a structured trade quality assessment."""
         schema = {
             "overall_score": "1–10",
@@ -109,22 +132,24 @@ class LLMEngine:
             _DEBATE_SYSTEM_PROMPT,
             prompt,
             fallback={"overall_score": 5, "summary": "Assessment unavailable.", "recommendation": "REFINE"},
+            history=conversation_history,
         )
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     async def _json_completion(
-        self, system: str, prompt: str, fallback: Any
+        self, system: str, prompt: str, fallback: Any, history: Optional[list[dict]] = None
     ) -> Any:
         try:
+            messages = [{"role": "system", "content": system}]
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": prompt})
             response = await self._client.chat.completions.create(
                 model=self._model,
                 temperature=self._temperature,
                 response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
             )
             content = response.choices[0].message.content or "{}"
             return json.loads(content)
@@ -133,16 +158,17 @@ class LLMEngine:
             return fallback
 
     async def _text_completion(
-        self, system: str, prompt: str, fallback: str
+        self, system: str, prompt: str, fallback: str, history: Optional[list[dict]] = None
     ) -> str:
         try:
+            messages = [{"role": "system", "content": system}]
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": prompt})
             response = await self._client.chat.completions.create(
                 model=self._model,
                 temperature=self._temperature,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
             )
             return response.choices[0].message.content or fallback
         except (APIError, Exception) as exc:

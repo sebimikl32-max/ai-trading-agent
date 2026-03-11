@@ -39,6 +39,7 @@ class DebateEngine:
         self,
         draft: TradeDraft,
         market_context: Optional[MarketContext],
+        conversation_history: Optional[list[dict]] = None,
     ) -> tuple[list[TradeObjection], list[TradeVariant], str]:
         """Main evaluation entry-point.
 
@@ -78,7 +79,9 @@ class DebateEngine:
             objections += self._check_variant(variant, market_context)
             alternatives += self._generate_alternatives(variant, market_context, thesis.symbol or "")
 
-        narrative = await self._build_narrative(draft, objections, alternatives, market_context)
+        narrative = await self._build_narrative(
+            draft, objections, alternatives, market_context, conversation_history
+        )
         return objections, alternatives, narrative
 
     # ── Rule-based checks ──────────────────────────────────────────────────────
@@ -220,6 +223,7 @@ class DebateEngine:
         objections: list[TradeObjection],
         alternatives: list[TradeVariant],
         ctx: Optional[MarketContext],
+        conversation_history: Optional[list[dict]] = None,
     ) -> str:
         if self._llm:
             try:
@@ -233,7 +237,8 @@ class DebateEngine:
                     for v in alternatives
                 ]
                 return await self._llm.generate_debate_narrative(
-                    draft_summary, obj_texts, var_texts, market_summary
+                    draft_summary, obj_texts, var_texts, market_summary,
+                    conversation_history=conversation_history,
                 )
             except Exception as exc:
                 logger.warning("LLM narrative generation failed: %s", exc)

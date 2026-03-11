@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from src.schemas.market import MarketContext, MarketSnapshot, TechnicalFeatures, TickData
@@ -113,3 +115,40 @@ class TestEvaluateTrade:
         objections, _, _ = await debate_engine_no_llm.evaluate_trade(sample_draft, None)
         rationale_objections = [o for o in objections if "rationale" in o.description.lower()]
         assert len(rationale_objections) >= 1
+
+    @pytest.mark.asyncio
+    async def test_evaluate_trade_accepts_none_history(self, debate_engine_no_llm, sample_draft):
+        """evaluate_trade should work when conversation_history is None (backward compat)."""
+        objections, _, narrative = await debate_engine_no_llm.evaluate_trade(
+            sample_draft, None, conversation_history=None
+        )
+        assert isinstance(narrative, str)
+
+    @pytest.mark.asyncio
+    async def test_evaluate_trade_accepts_empty_history(self, debate_engine_no_llm, sample_draft):
+        """evaluate_trade should work when conversation_history is an empty list."""
+        objections, _, narrative = await debate_engine_no_llm.evaluate_trade(
+            sample_draft, None, conversation_history=[]
+        )
+        assert isinstance(narrative, str)
+
+    @pytest.mark.asyncio
+    async def test_conversation_history_forwarded_to_llm(self, sample_draft):
+        """evaluate_trade should forward conversation_history to the LLM engine."""
+        mock_llm = MagicMock()
+        mock_llm.generate_debate_narrative = AsyncMock(return_value="LLM narrative")
+        rm = RiskManager(max_risk_pct=3.0, max_positions=5)
+        engine = DebateEngine(risk_manager=rm, llm_engine=mock_llm)
+
+        history = [
+            {"role": "user", "content": "I want to long EURUSD"},
+            {"role": "assistant", "content": "Tell me your stop loss."},
+        ]
+        _, _, narrative = await engine.evaluate_trade(
+            sample_draft, None, conversation_history=history
+        )
+
+        assert narrative == "LLM narrative"
+        mock_llm.generate_debate_narrative.assert_called_once()
+        _, kwargs = mock_llm.generate_debate_narrative.call_args
+        assert kwargs.get("conversation_history") == history

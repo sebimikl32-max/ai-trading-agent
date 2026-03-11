@@ -34,6 +34,8 @@ from src.utils.formatting import (
 
 logger = logging.getLogger(__name__)
 
+MAX_HISTORY_MESSAGES = 40  # 40 messages = 20 user+assistant pairs; cap to avoid token overflow
+
 
 class ConversationManager:
     """Orchestrates the full trade lifecycle for each user session."""
@@ -80,7 +82,7 @@ class ConversationManager:
         ctx.last_activity = datetime.now(timezone.utc)
         ctx.message_history.append({"role": "user", "content": text})
 
-        parsed = await self._parser.parse(text, user_id)
+        parsed = await self._parser.parse(text, user_id, conversation_history=ctx.message_history)
         logger.info(
             "User %s | state=%s | intent=%s | symbol=%s",
             user_id,
@@ -91,24 +93,32 @@ class ConversationManager:
 
         # Global overrides regardless of state
         if parsed.intent == UserIntent.CANCEL:
-            return self._handle_cancel(ctx)
-        if parsed.intent == UserIntent.CONFIRM_TRADE:
-            return await self._handle_confirm(ctx)
-        if parsed.intent == UserIntent.REJECT_TRADE:
-            return self._handle_reject(ctx)
+            reply = self._handle_cancel(ctx)
+        elif parsed.intent == UserIntent.CONFIRM_TRADE:
+            reply = await self._handle_confirm(ctx)
+        elif parsed.intent == UserIntent.REJECT_TRADE:
+            reply = self._handle_reject(ctx)
 
         # Route by conversation state
-        if ctx.state == ConversationState.IDLE:
-            return await self._handle_idle(ctx, parsed, text)
+        elif ctx.state == ConversationState.IDLE:
+            reply = await self._handle_idle(ctx, parsed, text)
         elif ctx.state == ConversationState.INTAKE:
-            return await self._handle_intake(ctx, parsed, text)
+            reply = await self._handle_intake(ctx, parsed, text)
         elif ctx.state == ConversationState.DEBATING:
-            return await self._handle_debating(ctx, parsed, text)
+            reply = await self._handle_debating(ctx, parsed, text)
         elif ctx.state == ConversationState.AWAITING_CONFIRMATION:
-            return await self._handle_awaiting(ctx, parsed, text)
+            reply = await self._handle_awaiting(ctx, parsed, text)
         elif ctx.state == ConversationState.EXECUTED:
-            return self._handle_post_execution(ctx, parsed, text)
-        return "I'm not sure how to respond to that. Try /help."
+            reply = self._handle_post_execution(ctx, parsed, text)
+        else:
+            reply = "I'm not sure how to respond to that. Try /help."
+
+        # Store assistant reply and trim history to prevent token overflow
+        ctx.message_history.append({"role": "assistant", "content": reply})
+        if len(ctx.message_history) > MAX_HISTORY_MESSAGES:
+            ctx.message_history = ctx.message_history[-MAX_HISTORY_MESSAGES:]
+
+        return reply
 
     async def handle_command(self, user_id: str, command: str) -> str:
         """Handle slash commands."""
@@ -330,7 +340,9 @@ class ConversationManager:
             self._drafts.add_variant(draft, variant)
             self._drafts.set_best_variant(draft, variant)
 
-        objections, alternatives, narrative = await self._debate.evaluate_trade(draft, market_ctx)
+        objections, alternatives, narrative = await self._debate.evaluate_trade(
+            draft, market_ctx, conversation_history=ctx.message_history
+        )
 
         for obj in objections:
             self._drafts.add_objection(draft, obj)
@@ -461,7 +473,9 @@ class ConversationManager:
         context_text = ""
         if ctx.active_draft:
             context_text = format_trade_draft(ctx.active_draft)
-        return await self._llm.answer_question(question, context_text)
+        return await self._llm.answer_question(
+            question, context_text, conversation_history=ctx.message_history
+        )
 
     # ── Commands ───────────────────────────────────────────────────────────────
 
